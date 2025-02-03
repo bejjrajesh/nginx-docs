@@ -15,6 +15,8 @@ if ! cmd=$(command -v "tar") || [ ! -x "$cmd" ]; then
     exit 1
 fi
 
+NGINX_PLUS_REPO="http://pkgs.nginx.com/pkgs/ubuntu/pool/nginx-plus/n/nginx-plus/"
+NGINX_REPO="https://nginx.org/packages/ubuntu/pool/nginx/n/nginx/"
 NGINX_CERT_PATH="/etc/ssl/nginx/nginx-repo.crt"
 NGINX_CERT_KEY_PATH="/etc/ssl/nginx/nginx-repo.key"
 LICENSE_JWT_PATH=""
@@ -28,15 +30,83 @@ NGINX_VERSION="latest"
 NGINX_PLUS_VERSION="latest"
 NIM_SM_VERSION="latest"
 CLICKHOUSE_VERSION="latest"
-CLICKHOUSE_LATEST_VERSION="24.9.2.42"
-NGINX_LATEST_VERSION=1.27.3-1
-NIM_LATEST_VERSION=2.19.0
 CURRENT_TIME=$(date +%s)
 TEMP_DIR="/tmp/${CURRENT_TIME}"
 TARGET_DISTRIBUTION=""
 PACKAGE_INSTALLER=""
 NMS_NGINX_MGMT_BLOCK="mgmt { \n  usage_report endpoint=127.0.0.1 interval=30m; \n  ssl_verify off; \n}";
 NIM_FQDN=""
+UBUNTU_2004="ubuntu20.04"
+UBUNTU_2204="ubuntu22.04"
+UBUNTU_2404="ubuntu24.04"
+DEBIAN_11="debian11"
+DEBIAN_12="debian12"
+CENTOS_8="centos8"
+REDHAT_8="rhel8"
+REDHAT_9="rhel9"
+ORACLE_8="ol8.10"
+
+UBUNTU_OS=(
+    "${UBUNTU_2004}"
+    "${UBUNTU_2204}"
+    "${UBUNTU_2404}"
+)
+DEB_OS=(
+    "${DEBIAN_11}"
+    "${DEBIAN_12}"
+)
+CENT_OS=(
+    "${CENTOS_8}"
+)
+RPM_OS=(
+    "${REDHAT_8}"
+    "${REDHAT_9}"
+    "${ORACLE_8}"
+)
+SUPPORTED_OS=()
+SUPPORTED_OS+=${DEB_OS[@]}
+SUPPORTED_OS+=" "${RPM_OS[@]}
+SUPPORTED_OS+=" "${CENT_OS[@]}
+SUPPORTED_OS+=" "${UBUNTU_OS[@]}
+
+declare -A NGINX_PLUS_REPO
+NGINX_PLUS_REPO['ubuntu20.04']="https://pkgs.nginx.com/plus/ubuntu/pool/nginx-plus/n/nginx-plus/"
+NGINX_PLUS_REPO['ubuntu22.04']="https://pkgs.nginx.com/plus/ubuntu/pool/nginx-plus/n/nginx-plus/"
+NGINX_PLUS_REPO['ubuntu24.04']="https://pkgs.nginx.com/plus/ubuntu/pool/nginx-plus/n/nginx-plus/"
+NGINX_PLUS_REPO['debian11']="https://pkgs.nginx.com/plus/debian/pool/nginx-plus/n/nginx-plus/"
+NGINX_PLUS_REPO['debian12']="https://pkgs.nginx.com/plus/debian/pool/nginx-plus/n/nginx-plus/"
+NGINX_PLUS_REPO['centos8']="https://pkgs.nginx.com/plus/centos/8/x86_64/RPMS/"
+NGINX_PLUS_REPO['rhel8']="https://pkgs.nginx.com/plus/rhel/8/x86_64/RPMS/"
+NGINX_PLUS_REPO['rhel9']="https://pkgs.nginx.com/plus/rhel/9/x86_64/RPMS/"
+NGINX_PLUS_REPO['oracle8']="https://pkgs.nginx.com/plus/rhel/8/x86_64/RPMS/"
+NGINX_PLUS_REPO['oracle9']="https://pkgs.nginx.com/plus/rhel/9/x86_64/RPMS/"
+NGINX_PLUS_REPO['amzn2']="https://pkgs.nginx.com/plus/amzn2/2/x86_64/RPMS/"
+
+declare -A NGINX_REPO
+NGINX_REPO['ubuntu20.04']="https://nginx.org/packages/mainline/ubuntu/pool/nginx/n/nginx/"
+NGINX_REPO['ubuntu22.04']="https://nginx.org/packages/mainline/ubuntu/pool/nginx/n/nginx/"
+NGINX_REPO['ubuntu24.04']="https://nginx.org/packages/mainline/ubuntu/pool/nginx/n/nginx/"
+NGINX_REPO['debian11']="https://nginx.org/packages/mainline/debian/pool/nginx/n/nginx/"
+NGINX_REPO['debian12']="https://nginx.org/packages/mainline/debian/pool/nginx/n/nginx/"
+NGINX_REPO['centos8']="https://nginx.org/packages/mainline/centos/8/x86_64/RPMS/"
+NGINX_REPO['rhel8']="https://nginx.org/packages/mainline/rhel/8/x86_64/RPMS/"
+NGINX_REPO['rhel9']="https://nginx.org/packages/mainline/rhel/9/x86_64/RPMS/"
+NGINX_REPO['oracle8']="https://nginx.org/packages/mainline/rhel/8/x86_64/RPMS/"
+NGINX_REPO['oracle9']="https://nginx.org/packages/mainline/rhel/9/x86_64/RPMS/"
+NGINX_REPO['amzn2']="https://nginx.org/packages/mainline/amzn2/2/x86_64/RPMS/"
+
+declare -A CLICKHOUSE_REPO
+CLICKHOUSE_REPO['ubuntu20.04']="https://packages.clickhouse.com/deb/pool/main/c/clickhouse/"
+CLICKHOUSE_REPO['ubuntu22.04']="https://packages.clickhouse.com/deb/pool/main/c/clickhouse/"
+CLICKHOUSE_REPO['ubuntu24.04']="https://packages.clickhouse.com/deb/pool/main/c/clickhouse/"
+CLICKHOUSE_REPO['debian11']="https://packages.clickhouse.com/deb/pool/main/c/clickhouse/"
+CLICKHOUSE_REPO['debian12']="https://packages.clickhouse.com/deb/pool/main/c/clickhouse/"
+CLICKHOUSE_REPO['centos8']="https://packages.clickhouse.com/rpm/stable/"
+CLICKHOUSE_REPO['rhel8']="https://packages.clickhouse.com/rpm/stable/"
+CLICKHOUSE_REPO['rhel9']="https://packages.clickhouse.com/rpm/stable/"
+CLICKHOUSE_REPO['oracle8']="https://packages.clickhouse.com/rpm/stable/"
+CLICKHOUSE_REPO['oracle9']="https://packages.clickhouse.com/rpm/stable/"
+CLICKHOUSE_REPO['amzn2']="https://packages.clickhouse.com/rpm/stable/"
 
 # Added to account for the renaming of the adc dimension from application to app.
 if [ -f "/usr/share/nms/catalogs/dimensions/application.yml" ]; then
@@ -44,6 +114,15 @@ if [ -f "/usr/share/nms/catalogs/dimensions/application.yml" ]; then
 fi
 
 set -o pipefail
+
+url_file_download() {
+  url=$1
+  dest=$2
+  if ! http_code=$(curl -fs "${url}" --cert ${NGINX_CERT_PATH} --key ${NGINX_CERT_KEY_PATH} --output "${dest}" --write-out '%{http_code}'); then
+    echo "-- Failed to download $url with HTTP code $http_code. Exiting."
+    exit 1
+  fi
+}
 
 check_last_command_status(){
    local status_code=$2
@@ -126,6 +205,32 @@ createNginxMgmtFile(){
     fi
 }
 
+findVersionFromUrl(){
+    repoUrl=$1
+    version=$2
+    findLatest=$3
+    readarray -t versions < <(curl -s  "${repoUrl}" | awk -F '"' '/href=/ {print $2}' | grep "${version}" | sort)
+    versions_count=${#versions[@]}
+    if [ "${versions_count}" -eq 0 ]; then
+          printf "Package %s not found. See available versions:" "${versions[@]}"
+          exit 1;
+    elif [ "${versions_count}" -gt 1 ]; then
+          if [[ "${findLatest}" == "true" ]]; then
+            echo "${versions[0]}"
+          else
+            printf "Multiple versions found for the package %s. Select your desired version:\n" "${pkg_name}" >&2
+            for i in "${!versions[@]}"; do
+                printf "%s: %s\n" "$i" "${versions[$i]}" >&2
+            done
+            read -rp "" index
+            echo "${versions[$index]}"
+          fi
+    else
+          echo "${pkg_name} with version ${pkg_version} found">&2
+          echo "${versions[0]}"
+    fi
+}
+
 findVersionForPackage(){
    pkg_name=$1
    pkg_version=$2
@@ -163,7 +268,112 @@ findVersionForPackage(){
    fi
 }
 
-debian_install_nginx(){
+printUsageInfo(){
+  echo "Usage: $0 [-c /path/to/nginx-repo.crt] [-k /path/to/nginx-repo.key] [-p nginx_plus_version] [-s security_module_version] -i [installable_tar_file_path] [-n nginx_oss_version] [-m mode(online/offline)] [-d distribution (ubuntu20.04,ubuntu22.04,ubuntu24.04,debian11,debian12,centos8,rhel8,rhel9,oracle7,oracle8,amzn2)] [-h print help]"
+  printf "\n\n  -m  <mode> online/offline. Controls whether to install from the internet or from a package created using this script. \n"
+  printf "\n  -c  /path/to/your/<nginx-repo.crt> file.\n"
+  printf "\n  -k  /path/to/your/<nginx-repo.key> file.\n"
+  printf "\n  -p  <nginx_plus_version>. Include NGINX Plus version to install as an API gateway. Valid values are 'latest' and specific versions like R32. For a list, see https://docs.nginx.com/nginx/releases/. Supersedes -n.\n"
+  printf "\n  -n  <nginx_oss_version>. Provide NGINX OSS version to install as an API gateway. Valid values are 'latest' or a specific version like 1.27.1. Ignored if you use -p to specify an NGINX Plus version. For a list, see https://nginx.org/en/download.html .\n"
+  printf "\n  -s  <security-module-version>. Installs a security module along with NGINX Instance Manager. You can specify latest or a version specified in https://docs.nginx.com/nginx-management-suite/security/releases/release-notes/.\n"
+  printf "\n  -i  <installable_tar_file_path>. Include the path with an archive file to support NGINX Instance Manager installation. Requires -m Offline."
+  printf "\n  -d  <distribution>. Include the label of a distribution. Requires -m Offline. This creates a file with NGINX Instance Manager dependencies and NGINX Instance Manager install packages for the specified distribution.\n"
+  printf "\n  -v  <NIM_VERSION>. NGINX Instance Manager version to install/package.\n"
+  printf "\n  -j  <JWT_TOKEN_FILE_PATH>. Path to the JWT token file used for license and usage consumption reporting.'\n"
+  printf "\n  -r  To uninstall NGINX Instance Manager and its dependencies. \n"
+  printf "\n  -h  Print this help message.\n"
+  exit 0
+}
+
+printSupportedOS(){
+  printf "This script can be run on the following operating systems"
+  printf "\n  1. ubuntu20.04(focal)"
+  printf "\n  2. ubuntu22.04(jammy)"
+  printf "\n  3. ubuntu24.04(noble)"
+  printf "\n  4. debian11(bullseye)"
+  printf "\n  5. debian12(bookworm)"
+  printf "\n  6. centos8(CentOS 8)"
+  printf "\n  7. rhel8(Redhat Enterprise Linux Version 8)"
+  printf "\n  8. rhel9( Redhat Enterprise Linux Version 9)"
+  printf "\n  9. oracle7(Oracle Linux Version 7)"
+  printf "\n 10. oracle8(Oracle Linux Version 8)"
+  printf "\n 11. amzn2(Amazon Linux 2)\n"
+  exit 0
+}
+
+check_NIM_status(){
+  sleep 5
+  GREEN='\033[0;32m'
+  NC='\033[0m'
+
+  if ! curl -k https://localhost/ui 2>/dev/null | grep -q "NGINX"; then
+    sleep 2
+    if ! curl -k https://localhost/ui 2>/dev/null | grep -q "NGINX"; then
+    	echo "NGINX Instance Manager failed to start"
+      exit 1
+    else
+      echo -e "${GREEN}NGINX Instance Manager Successfully Started${NC}"
+      echo -e "\n[NOTE] - If NGINX Instance Manager dashboard is still not accessible, Please ensure port 443 is exposed and accessible via firewall"
+      exit 0
+    fi
+  else
+	  echo -e "${GREEN}NGINX Instance Manager Successfully Started${NC}"
+    echo -e "\n[NOTE] - If NGINX Instance Manager dashboard is still not accessible, Please ensure port 443 is exposed and accessible via firewall"
+    exit 0
+  fi
+}
+
+check_cert_key_jwt_path(){
+  if [[ ! -f "$NGINX_CERT_KEY_PATH" ]]; then
+    echo "Error: NGINX key not found. Please give cert path using -k"
+    exit 1
+  fi
+
+  if [[ ! -f "$NGINX_CERT_PATH" ]]; then
+    echo "Error: NGINX cert not found. Please give key path using -c"
+    exit 1
+  fi
+
+  if [[ "$USE_NGINX_PLUS" == true &&  "$NGINX_PLUS_VERSION" == "latest" ]]; then
+    if [[ ! -f "$LICENSE_JWT_PATH" ]]; then
+      echo "Error: JWT License not found. It is required with NGINX plus"
+      exit 1
+    fi
+    echo "Copying jwt"
+    if [ ! -d "/etc/nginx" ]; then
+      mkdir /etc/nginx
+      check_last_command_status "mkdir /etc/nginx" $?
+    fi
+    cp "${LICENSE_JWT_PATH}" "/etc/nginx/license.jwt"
+    check_last_command_status "cp $LICENSE_JWT_PATH /etc/nginx/license.jwt" $?
+  fi
+}
+
+check_if_nim_installed(){
+
+  local all_services_present=0
+
+  if nms-core --version > /dev/null 2>&1 && nms-dpm --version > /dev/null 2>&1 && nms-integrations --version > /dev/null 2>&1 \
+   && nms-ingestion --version > /dev/null 2>&1 && nginx -version > /dev/null 2>&1; then
+    all_services_present=1
+  fi
+
+  if [[ "$all_services_present" == 1 ]]; then
+    if [ "$UNINSTALL_NIM" == "true" ]; then
+      uninstall_nim
+    else
+      echo "NGINX Instance Manager already installed."
+      exit 1
+    fi
+  else
+    if [ "$UNINSTALL_NIM" == "true" ]; then
+      echo "Cannot uninstall NGINX Instance Manager as it is not installed"
+      exit 1
+    fi
+  fi
+}
+
+debian_install_nginx_online(){
     apt-get update \
         && DEBIAN_FRONTEND=noninteractive \
             apt-get install -y --no-install-recommends ca-certificates \
@@ -247,7 +457,7 @@ debian_install_nginx(){
     fi
 }
 
-debian_install_clickhouse(){
+debian_install_clickhouse_online(){
     curl https://packages.clickhouse.com/rpm/lts/repodata/repomd.xml.key | gpg --dearmor \
           | sudo tee /usr/share/keyrings/clickhouse-keyring.gpg >/dev/null
     check_last_command_status "curl https://packages.clickhouse.com/rpm/lts/repodata/repomd.xml.key" $?
@@ -274,7 +484,7 @@ debian_install_clickhouse(){
     fi
 }
 
-debian_install_nim(){
+debian_install_nim_online(){
 
   echo "Installing NGINX Instance Manager..."
   if [ "${NIM_VERSION}" == "latest" ]; then
@@ -310,7 +520,7 @@ debian_install_nim(){
 
 }
 
-installBundleForDebianDistro() {
+install_online_for_debian() {
   # creating nms group and nms user if it isn't already there
   declare DEBIAN_FLAVOUR="debian"
   if ! getent group "${NIM_GROUP}" >/dev/null; then
@@ -328,9 +538,9 @@ installBundleForDebianDistro() {
       --shell /bin/false \
       "${NIM_USER}" >/dev/null
   fi
-  debian_install_nginx
-  debian_install_clickhouse
-  debian_install_nim
+  debian_install_nginx_online
+  debian_install_clickhouse_online
+  debian_install_nim_online
   if [ "${USE_SM_MODULE}" == "true" ]; then
       nim_major_version=$(nms-core --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | awk -F. '{print $1}')
       nim_minor_version=$(nms-core --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | awk -F. '{print $1}')
@@ -363,7 +573,7 @@ installBundleForDebianDistro() {
   fi
 }
 
-installBundleForRPMDistro(){
+install_online_for_rpm(){
     # creating nms group and nms user if it isn't already there
     if ! getent group "${NIM_GROUP}" >/dev/null; then
       groupadd --system "${NIM_GROUP}" >/dev/null
@@ -501,29 +711,20 @@ installBundleForRPMDistro(){
       fi
     fi
     sleep 5
+
     echo "Restarting nginx API gateway"
     systemctl restart nginx
-}
-
-url_file_download() {
-  url=$1
-  dest=$2
-  if ! http_code=$(curl -fs "${url}" --cert ${NGINX_CERT_PATH} --key ${NGINX_CERT_KEY_PATH} --output "${dest}" --write-out '%{http_code}'); then
-    echo "-- Failed to download $url with HTTP code $http_code. Exiting."
-    exit 1
-  fi
 }
 
 install_nim_online(){
   if cat /etc/*-release | grep -iq 'debian\|ubuntu'; then
     PACKAGE_INSTALLER="apt"
-    installBundleForDebianDistro
+    install_online_for_debian
     generate
   elif cat /etc/*-release | grep -iq 'centos\|fedora\|rhel\|Amazon Linux'; then
     PACKAGE_INSTALLER="rpm"
-    installBundleForRPMDistro
+    install_online_for_rpm
     generate
-
   else
     printf "Unsupported distribution"
     exit 1
@@ -532,111 +733,6 @@ install_nim_online(){
     /etc/nms/scripts/certs.sh ${NIM_FQDN}
   fi
   curl -s -o /dev/null --cert ${NGINX_CERT_PATH} --key ${NGINX_CERT_KEY_PATH} "https://pkgs.nginx.com/nms/?using_install_script=true&app=nim&mode=online"
-}
-
-printUsageInfo(){
-  echo "Usage: $0 [-c /path/to/nginx-repo.crt] [-k /path/to/nginx-repo.key] [-p nginx_plus_version] [-s security_module_version] -i [installable_tar_file_path] [-n nginx_oss_version] [-m mode(online/offline)] [-d distribution (ubuntu20.04,ubuntu22.04,ubuntu24.04,debian11,debian12,centos8,rhel8,rhel9,oracle7,oracle8,amzn2)] [-h print help]"
-  printf "\n\n  -m  <mode> online/offline. Controls whether to install from the internet or from a package created using this script. \n"
-  printf "\n  -c  /path/to/your/<nginx-repo.crt> file.\n"
-  printf "\n  -k  /path/to/your/<nginx-repo.key> file.\n"
-  printf "\n  -p  <nginx_plus_version>. Include NGINX Plus version to install as an API gateway. Valid values are 'latest' and specific versions like R32. For a list, see https://docs.nginx.com/nginx/releases/. Supersedes -n.\n"
-  printf "\n  -n  <nginx_oss_version>. Provide NGINX OSS version to install as an API gateway. Valid values are 'latest' or a specific version like 1.27.1. Ignored if you use -p to specify an NGINX Plus version. For a list, see https://nginx.org/en/download.html .\n"
-  printf "\n  -s  <security-module-version>. Installs a security module along with NGINX Instance Manager. You can specify latest or a version specified in https://docs.nginx.com/nginx-management-suite/security/releases/release-notes/.\n"
-  printf "\n  -i  <installable_tar_file_path>. Include the path with an archive file to support NGINX Instance Manager installation. Requires -m Offline."
-  printf "\n  -d  <distribution>. Include the label of a distribution. Requires -m Offline. This creates a file with NGINX Instance Manager dependencies and NGINX Instance Manager install packages for the specified distribution.\n"
-  printf "\n  -v  <NIM_VERSION>. NGINX Instance Manager version to install/package.\n"
-  printf "\n  -j  <JWT_TOKEN_FILE_PATH>. Path to the JWT token file used for license and usage consumption reporting.'\n"
-  printf "\n  -r  To uninstall NGINX Instance Manager and its dependencies. \n"
-  printf "\n  -h  Print this help message.\n"
-  exit 0
-}
-
-printSupportedOS(){
-  printf "This script can be run on the following operating systems"
-  printf "\n  1. ubuntu20.04(focal)"
-  printf "\n  2. ubuntu22.04(jammy)"
-  printf "\n  3. ubuntu24.04(noble)"
-  printf "\n  4. debian11(bullseye)"
-  printf "\n  5. debian12(bookworm)"
-  printf "\n  6. centos8(CentOS 8)"
-  printf "\n  7. rhel8(Redhat Enterprise Linux Version 8)"
-  printf "\n  8. rhel9( Redhat Enterprise Linux Version 9)"
-  printf "\n  9. oracle7(Oracle Linux Version 7)"
-  printf "\n 10. oracle8(Oracle Linux Version 8)"
-  printf "\n 11. amzn2(Amazon Linux 2)\n"
-  exit 0
-}
-
-check_NIM_status(){
-  sleep 5
-  GREEN='\033[0;32m'
-  NC='\033[0m'
-
-  if ! curl -k https://localhost/ui 2>/dev/null | grep -q "NGINX"; then
-    sleep 2
-    if ! curl -k https://localhost/ui 2>/dev/null | grep -q "NGINX"; then
-    	echo "NGINX Instance Manager failed to start"
-      exit 1
-    else
-      echo -e "${GREEN}NGINX Instance Manager Successfully Started${NC}"
-      echo -e "\n[NOTE] - If NGINX Instance Manager dashboard is still not accessible, Please ensure port 443 is exposed and accessible via firewall"
-      exit 0
-    fi
-  else
-	  echo -e "${GREEN}NGINX Instance Manager Successfully Started${NC}"
-    echo -e "\n[NOTE] - If NGINX Instance Manager dashboard is still not accessible, Please ensure port 443 is exposed and accessible via firewall"
-    exit 0
-  fi
-}
-
-check_cert_key_jwt_path(){
-  if [[ ! -f "$NGINX_CERT_KEY_PATH" ]]; then
-    echo "Error: NGINX key not found. Please give cert path using -k"
-    exit 1
-  fi
-
-  if [[ ! -f "$NGINX_CERT_PATH" ]]; then
-    echo "Error: NGINX cert not found. Please give key path using -c"
-    exit 1
-  fi
-
-  if [[ "$USE_NGINX_PLUS" == true &&  "$NGINX_PLUS_VERSION" == "latest" ]]; then
-    if [[ ! -f "$LICENSE_JWT_PATH" ]]; then
-      echo "Error: JWT License not found. It is required with NGINX plus"
-      exit 1
-    fi
-    echo "Copying jwt"
-    if [ ! -d "/etc/nginx" ]; then
-      mkdir /etc/nginx
-      check_last_command_status "mkdir /etc/nginx" $?
-    fi
-    cp "${LICENSE_JWT_PATH}" "/etc/nginx/license.jwt"
-    check_last_command_status "cp $LICENSE_JWT_PATH /etc/nginx/license.jwt" $?
-  fi
-}
-
-check_if_nim_installed(){
-
-  local all_services_present=0
-
-  if nms-core --version > /dev/null 2>&1 && nms-dpm --version > /dev/null 2>&1 && nms-integrations --version > /dev/null 2>&1 \
-   && nms-ingestion --version > /dev/null 2>&1 && nginx -version > /dev/null 2>&1; then
-    all_services_present=1
-  fi
-
-  if [[ "$all_services_present" == 1 ]]; then
-    if [ "$UNINSTALL_NIM" == "true" ]; then
-      uninstall_nim
-    else
-      echo "NGINX Instance Manager already installed."
-      exit 1
-    fi
-  else
-    if [ "$UNINSTALL_NIM" == "true" ]; then
-      echo "Cannot uninstall NGINX Instance Manager as it is not installed"
-      exit 1
-    fi
-  fi
 }
 
 uninstall_nim(){
@@ -689,342 +785,286 @@ This action deletes all files in the following directories: /etc/nms , /etc/ngin
   fi
 }
 
-OPTS_STRING="k:c:m:d:i:s:p:n:hv:t:j:rf:l"
-while getopts ${OPTS_STRING} opt; do
-  case ${opt} in
-    c)
-      if [ ! -d "/etc/ssl/nginx" ]; then
-        mkdir /etc/ssl/nginx
-        check_last_command_status "mkdir /etc/ssl/nginx" $?
-      fi
-      cp "${OPTARG}" ${NGINX_CERT_PATH}
-      check_last_command_status "cp ${OPTARG} ${NGINX_CERT_PATH}" $?
-      ;;
-    k)
-      if [ ! -d "/etc/ssl/nginx" ]; then
-        mkdir /etc/ssl/nginx
-        check_last_command_status "mkdir /etc/ssl/nginx" $?
-      fi
-      cp "${OPTARG}" ${NGINX_CERT_KEY_PATH}
-      check_last_command_status "cp ${OPTARG} ${NGINX_CERT_KEY_PATH}" $?
-      ;;
-    p)
-      USE_NGINX_PLUS="true"
-      NGINX_PLUS_VERSION=${OPTARG}
-      ;;
-    s)
-      USE_SM_MODULE="true"
-      NIM_SM_VERSION="${OPTARG}"
-      ;;
-    i)
-      INSTALL_PATH=${OPTARG}
-      ;;
-    n)
-      NGINX_VERSION=${OPTARG}
-      ;;
-    m)
-      MODE="${OPTARG}"
-      if [[ "${MODE}" != "online" && "${MODE}" != "offline" ]]; then
-          echo "invalid mode ${MODE}"
-          echo "supported values for mode are 'online' or 'offline'"
-          exit 1
-      fi
-      ;;
-    d)
-      TARGET_DISTRIBUTION=${OPTARG}
-      ;;
-    v)
-      NIM_VERSION=${OPTARG}
-      ;;
-    j)
-      LICENSE_JWT_PATH=${OPTARG}
-      ;;
-    t)
-      CLICKHOUSE_VERSION=${OPTARG}
-      ;;
-    r)
-      UNINSTALL_NIM="true"
-      ;;
-    f)
-      NIM_FQDN=${OPTARG}
-      ;;
-    h)
-       printUsageInfo
-       exit 0
-      ;;
-    l)
-       printSupportedOS
-       exit 0
-       ;;
-    :)
-      echo "Option -${OPTARG} requires an argument."
-      exit 1
-      ;;
-    ?)
-      echo "Invalid option: -${OPTARG}."
-      exit 1
-      ;;
-  esac
-done
+package_nim_offline(){
+        if [[ !  ${SUPPORTED_OS[*]} =~ ${TARGET_DISTRIBUTION} ]]; then
+            echo "Error: The TARGET_DISTRIBUTION ${TARGET_DISTRIBUTION} is not supported in this script... please select one of the following options - ${SUPPORTED_OS[*]}"
+            exit 1
+        fi
+        if [[ "${USE_NGINX_PLUS}" == "true" ]]; then
+              nginx_plus_path=""
+              if [ "${NGINX_PLUS_VERSION}" == "latest" ]; then
+                  nginx_plus_path=$(findVersionFromUrl "${NGINX_PLUS_REPO[${TARGET_DISTRIBUTION}]}" "nginx-plus_" "true")
+                  echo "latest version found for package nginx_plus is ${nginx_plus_path}"
+                  check_last_command_status "failed to get the version ${NGINX_PLUS_VERSION}" $?
+                  exit 1
+              else
+                  nginx_plus_path=$(findVersionFromUrl "${NGINX_PLUS_REPO[${TARGET_DISTRIBUTION}]}" "nginx-plus_${NGINX_PLUS_VERSION}" "false")
+                  check_last_command_status "failed to get the nginx plus version ${NGINX_PLUS_VERSION}" $?
+                  exit 1
+              fi
+              echo "Downloading ${NGINX_PLUS_REPO[${TARGET_DISTRIBUTION}]}/${nginx_plus_path}...."
+              curl -o "${TEMP_DIR}" "${NGINX_PLUS_REPO[${TARGET_DISTRIBUTION}]}/${nginx_plus_path}"
+              check_last_command_status "curl -o ${TEMP_DIR} ${NGINX_PLUS_REPO[${TARGET_DISTRIBUTION}]}/${nginx_plus_path}" $?
+        else
+             declare nginx_full_path=""
+             if [ "${NGINX_VERSION}" == "latest" ]; then
+                  nginx_full_path=$(findVersionFromUrl "${NGINX_REPO[${TARGET_DISTRIBUTION}]}" "nginx_" "true")
+                  echo "latest version found for package nginx_plus is ${nginx_full_path}"
+                  check_last_command_status "failed to get the nginx version ${NGINX_VERSION}" $?
+             else
+                  nginx_full_path=$(findVersionFromUrl "${NGINX_REPO[${TARGET_DISTRIBUTION}]}" "nginx_${NGINX_VERSION}" "false")
+                  check_last_command_status "failed to get the nginx version ${NGINX_VERSION}" $?
+             fi
+             echo "Downloading ${NGINX_PLUS_REPO[${TARGET_DISTRIBUTION}]}/${nginx_full_path}...."
+             curl -o "${TEMP_DIR}" "${NGINX_PLUS_REPO[${TARGET_DISTRIBUTION}]}/${nginx_full_path}"
+             check_last_command_status "curl -o \"${TEMP_DIR}\" \"${NGINX_PLUS_REPO[${TARGET_DISTRIBUTION}]}/${nginx_full_path}\"" $?
+        fi
 
-check_if_nim_installed
-check_cert_key_jwt_path
+          #download clickhouse dependencies
+          clickhouse-common-static clickhouse-server clickhouse-client
 
-if [ "${MODE}" == "online" ]; then
-  install_nim_online
-  check_NIM_status
+          declare clickhouse_common_path=""
+          if [ "${CLICKHOUSE_VERSION}" == "latest" ]; then
+              clickhouse_common_path=$(findVersionFromUrl "${CLICKHOUSE_REPO[${TARGET_DISTRIBUTION}]}" "clickhouse-common-static" "true")
+              check_last_command_status "failed to get the clickhouse-common-static packages with version ${CLICKHOUSE_VERSION}" $?
+          else
+              clickhouse_common_path=$(findVersionFromUrl "${CLICKHOUSE_REPO[${TARGET_DISTRIBUTION}]}" "clickhouse-common-static_${CLICKHOUSE_VERSION}" "false")
+              check_last_command_status "failed to get the clickhouse-common-static version ${CLICKHOUSE_VERSION}" $?
+          fi
+          declare clickhouse_server_path=""
+          if [ "${CLICKHOUSE_VERSION}" == "latest" ]; then
+              clickhouse_server_path=$(findVersionFromUrl "${CLICKHOUSE_REPO[${TARGET_DISTRIBUTION}]}" "clickhouse-server" "true")
+              check_last_command_status "failed to get the clickhouse-server packages with version ${CLICKHOUSE_VERSION}" $?
+          else
+              clickhouse_server_path=$(findVersionFromUrl "${CLICKHOUSE_REPO[${TARGET_DISTRIBUTION}]}" "clickhouse-server_${CLICKHOUSE_VERSION}" "false")
+              check_last_command_status "failed to get the clickhouse-server version ${CLICKHOUSE_VERSION}" $?
+          fi
+          declare clickhouse_client_path=""
+          if [ "${CLICKHOUSE_VERSION}" == "latest" ]; then
+               clickhouse_client_path=$(findVersionFromUrl "${CLICKHOUSE_REPO[${TARGET_DISTRIBUTION}]}" "clickhouse-client" "true")
+               check_last_command_status "failed to get the clickhouse-client packages with version ${CLICKHOUSE_VERSION}" $?
+          else
+               clickhouse_client_path=$(findVersionFromUrl "${CLICKHOUSE_REPO[${TARGET_DISTRIBUTION}]}" "clickhouse-client_${CLICKHOUSE_VERSION}" "false")
+               check_last_command_status "failed to get the clickhouse-client version ${CLICKHOUSE_VERSION}" $?
+          fi
+          echo "Downloading ${CLICKHOUSE_REPO[${TARGET_DISTRIBUTION}]}/${clickhouse_common_path}...."
+          curl -o "${TEMP_DIR}" "${CLICKHOUSE_REPO[${TARGET_DISTRIBUTION}]}/${clickhouse_common_path}"
+          check_last_command_status "curl -o \"${TEMP_DIR}\" \"${CLICKHOUSE_REPO[${TARGET_DISTRIBUTION}]}/${clickhouse_common_path}\"" $?
 
-else
-  if [ "${NGINX_VERSION}" == "latest" ]; then
-      NGINX_VERSION=${NGINX_LATEST_VERSION}
-  fi
-  if [ "${NIM_VERSION}" == "latest" ]; then
-      NIM_VERSION=${NIM_LATEST_VERSION}
-  fi
-  if [ "${CLICKHOUSE_VERSION}" == "latest" ]; then
-      CLICKHOUSE_VERSION=${CLICKHOUSE_LATEST_VERSION}
-  fi
+          echo "Downloading ${CLICKHOUSE_REPO[${TARGET_DISTRIBUTION}]}/${clickhouse_server_path}...."
+          curl -o "${TEMP_DIR}" "${CLICKHOUSE_REPO[${TARGET_DISTRIBUTION}]}/${clickhouse_server_path}"
+          check_last_command_status "curl -o \"${TEMP_DIR}\" \"${CLICKHOUSE_REPO[${TARGET_DISTRIBUTION}]}/${clickhouse_server_path}\"" $?
 
-  declare -A CLICKHOUSE_REPO
-  CLICKHOUSE_REPO['ubuntu20.04']="https://packages.clickhouse.com/deb/pool/main/c/clickhouse/"
-  CLICKHOUSE_REPO['ubuntu22.04']="https://packages.clickhouse.com/deb/pool/main/c/clickhouse/"
-  CLICKHOUSE_REPO['ubuntu24.04']="https://packages.clickhouse.com/deb/pool/main/c/clickhouse/"
-  CLICKHOUSE_REPO['debian11']="https://packages.clickhouse.com/deb/pool/main/c/clickhouse/"
-  CLICKHOUSE_REPO['debian12']="https://packages.clickhouse.com/deb/pool/main/c/clickhouse/"
-  CLICKHOUSE_REPO['centos8']="https://packages.clickhouse.com/rpm/stable/"
-  CLICKHOUSE_REPO['rhel8']="https://packages.clickhouse.com/rpm/stable/"
-  CLICKHOUSE_REPO['rhel9']="https://packages.clickhouse.com/rpm/stable/"
-  CLICKHOUSE_REPO['oracle8']="https://packages.clickhouse.com/rpm/stable/"
-  CLICKHOUSE_REPO['oracle9']="https://packages.clickhouse.com/rpm/stable/"
-  CLICKHOUSE_REPO['amzn2']="https://packages.clickhouse.com/rpm/stable/"
+          echo "Downloading ${CLICKHOUSE_REPO[${TARGET_DISTRIBUTION}]}/${clickhouse_client_path}...."
+          curl -o "${TEMP_DIR}" "${CLICKHOUSE_REPO[${TARGET_DISTRIBUTION}]}/${clickhouse_client_path}"
+          check_last_command_status "curl -o \"${TEMP_DIR}\" \"${CLICKHOUSE_REPO[${TARGET_DISTRIBUTION}]}/${clickhouse_client_path}\"" $?
 
-  declare -A NGINX_REPO
-  NGINX_REPO['ubuntu20.04']="https://nginx.org/packages/mainline/ubuntu/pool/nginx/n/nginx/"
-  NGINX_REPO['ubuntu22.04']="https://nginx.org/packages/mainline/ubuntu/pool/nginx/n/nginx/"
-  NGINX_REPO['ubuntu24.04']="https://nginx.org/packages/mainline/ubuntu/pool/nginx/n/nginx/"
-  NGINX_REPO['debian11']="https://nginx.org/packages/mainline/debian/pool/nginx/n/nginx/"
-  NGINX_REPO['debian12']="https://nginx.org/packages/mainline/debian/pool/nginx/n/nginx/"
-  NGINX_REPO['centos8']="https://nginx.org/packages/mainline/centos/8/x86_64/RPMS/"
-  NGINX_REPO['rhel8']="https://nginx.org/packages/mainline/rhel/8/x86_64/RPMS/"
-  NGINX_REPO['rhel9']="https://nginx.org/packages/mainline/rhel/9/x86_64/RPMS/"
-  NGINX_REPO['oracle8']="https://nginx.org/packages/mainline/rhel/8/x86_64/RPMS/"
-  NGINX_REPO['oracle9']="https://nginx.org/packages/mainline/rhel/9/x86_64/RPMS/"
-  NGINX_REPO['amzn2']="https://nginx.org/packages/mainline/amzn2/2/x86_64/RPMS/"
-  CLICKHOUSE_KEY="https://packages.clickhouse.com/rpm/lts/repodata/repomd.xml.key"
-  NGINX_KEY="https://nginx.org/keys/nginx_signing.key"
+          #download nim dependencies
+          declare nim_path=""
+          if [ "${NIM_VERSION}" == "latest" ]; then
+              nim_path=$(findVersionFromUrl "${NIM_REPO}" "nms-instance-manager_" "true")
+              check_last_command_status "failed to get the nginx version ${NIM_VERSION}" $?
+          else
+              nim_path=$(findVersionFromUrl "${NIM_REPO}" "nms-instance-manager_${NIM_VERSION}" "false")
+              check_last_command_status "failed to get the nginx version ${NGINX_VERSION}" $?
+          fi
+          echo "Downloading ${NIM_REPO}/${nim_path}...."
+          curl -o "${TEMP_DIR}" "${NIM_REPO}/${nim_path}"
+          check_last_command_status "curl -o \"${TEMP_DIR}\" \"${NIM_REPO}/${nim_path}\"" $?
+          bundle_file="nim-${NIM_VERSION}-${TARGET_DISTRIBUTION}.tar.gz"
+          echo -n "Creating NGINX Instance Manager install bundle ... ${bundle_file}"
+          cp ${NGINX_CERT_PATH}  "${TEMP_DIR}/${TARGET_DISTRIBUTION}/nginx-repo.crt"
+          cp ${NGINX_CERT_KEY_PATH} "${TEMP_DIR}/${TARGET_DISTRIBUTION}/nginx-repo.key"
+          tar -zcf "$bundle_file" -C "${TEMP_DIR}/${TARGET_DISTRIBUTION}" .
+          echo -e "\nSuccessfully created the NGINX Instance Manager bundle - $bundle_file"
+}
 
-  declare -A NMS_REPO
-  NMS_REPO['ubuntu20.04']="https://pkgs.nginx.com/nms/ubuntu/pool/nginx-plus/n/nms-instance-manager/"
-  NMS_REPO['ubuntu22.04']="https://pkgs.nginx.com/nms/ubuntu/pool/nginx-plus/n/nms-instance-manager/"
-  NMS_REPO['ubuntu24.04']="https://pkgs.nginx.com/nms/ubuntu/pool/nginx-plus/n/nms-instance-manager/"
-  NMS_REPO['debian11']="https://pkgs.nginx.com/nms/debian/pool/nginx-plus/n/nms-instance-manager/"
-  NMS_REPO['debian12']="https://pkgs.nginx.com/nms/debian/pool/nginx-plus/n/nms-instance-manager/"
-  NMS_REPO['centos8']="https://pkgs.nginx.com/nms/centos/8/x86_64/RPMS/"
-  NMS_REPO['rhel8']="https://pkgs.nginx.com/nms/centos/8/x86_64/RPMS/"
-  NMS_REPO['rhel9']="https://pkgs.nginx.com/nms/centos/9/x86_64/RPMS/"
-  NMS_REPO['oracle8']="https://pkgs.nginx.com/nms/centos/8/x86_64/RPMS/"
-  NMS_REPO['oracle9']="https://pkgs.nginx.com/nms/centos/9/x86_64/RPMS/"
-  NMS_REPO['amzn2']="https://pkgs.nginx.com/nms/amzn2/2/x86_64/RPMS/"
+install_nim_offline_from_file(){
+  echo "Installing NGINX Instance Manager bundle from the path ${INSTALL_PATH}"
+      if [ -f "${INSTALL_PATH}" ]; then
+        if [ ! -f "${TEMP_DIR}" ]; then
+          mkdir -p "${TEMP_DIR}"
+        fi
+        tar xvf "${INSTALL_PATH}" -C "${TEMP_DIR}"
+        chmod -R 777 "${TEMP_DIR}"
+        chown -R "${USER}" "${TEMP_DIR}"
+        if cat /etc/*-release | grep -iq 'debian\|ubuntu'; then
+          for pkg_nginx in "${TEMP_DIR}"/nginx*.deb; do
+              echo "Installing nginx from ${pkg_nginx}"
+              DEBIAN_FRONTEND=noninteractive dpkg -i "$pkg_nginx"
+              check_last_command_status "dpkg -i \"$pkg_nginx\"" $?
+          done
+          for pkg_clickhouse in "${TEMP_DIR}"/clickhouse-common*.deb; do
+              echo "Installing clickhouse dependencies from ${pkg_clickhouse}"
+              DEBIAN_FRONTEND=noninteractive dpkg -i  "$pkg_clickhouse"
+              check_last_command_status "dpkg -i \"$pkg_clickhouse\"" $?
+          done
+          for pkg_clickhouse_srv in "${TEMP_DIR}"/clickhouse-server*.deb; do
+              echo "Installing clickhouse dependencies from ${pkg_clickhouse_srv}"
+              DEBIAN_FRONTEND=noninteractive dpkg -i  "$pkg_clickhouse_srv"
+              check_last_command_status "dpkg -i \"$pkg_clickhouse_srv\"" $?
+          done
+          for pkg_nim in "${TEMP_DIR}"/nms-instance-manager*.deb; do
+              echo "Installing NGINX Instance Manager from ${pkg_nim}"
+              DEBIAN_FRONTEND=noninteractive dpkg -i "$pkg_nim"
+              check_last_command_status "dpkg -i \"$pkg_nim\"" $?
+          done
 
-  declare -A CLICKHOUSE_PACKAGES
-  # for Clickhouse package names are static between distributions
-  # we use ubuntu/centos entries as placeholders
-  CLICKHOUSE_PACKAGES['ubuntu']=$(printf "clickhouse-server_%s_amd64.deb\nclickhouse-common-static_%s_amd64.deb" ${CLICKHOUSE_VERSION} ${CLICKHOUSE_VERSION})
-  CLICKHOUSE_PACKAGES['centos']=$(printf "clickhouse-server-%s.x86_64.rpm\nclickhouse-common-static-%s.x86_64.rpm"  ${CLICKHOUSE_VERSION} ${CLICKHOUSE_VERSION})
-  CLICKHOUSE_PACKAGES['ubuntu20.04']=${CLICKHOUSE_PACKAGES['ubuntu']}
-  CLICKHOUSE_PACKAGES['ubuntu22.04']=${CLICKHOUSE_PACKAGES['ubuntu']}
-  CLICKHOUSE_PACKAGES['ubuntu24.04']=${CLICKHOUSE_PACKAGES['ubuntu']}
-  CLICKHOUSE_PACKAGES['debian11']=${CLICKHOUSE_PACKAGES['ubuntu']}
-  CLICKHOUSE_PACKAGES['debian12']=${CLICKHOUSE_PACKAGES['ubuntu']}
-  CLICKHOUSE_PACKAGES['centos8']=${CLICKHOUSE_PACKAGES['centos']}
-  CLICKHOUSE_PACKAGES['rhel8']=${CLICKHOUSE_PACKAGES['centos']}
-  CLICKHOUSE_PACKAGES['rhel9']=${CLICKHOUSE_PACKAGES['centos']}
-  CLICKHOUSE_PACKAGES['oracle8']=${CLICKHOUSE_PACKAGES['centos']}
-  CLICKHOUSE_PACKAGES['oracle9']=${CLICKHOUSE_PACKAGES['centos']}
-  CLICKHOUSE_PACKAGES['amzn2']=${CLICKHOUSE_PACKAGES['centos']}
+          generate
+          echo "Starting clickhouse-server"
+          systemctl start clickhouse-server
 
-  declare -A NGINX_PACKAGES
-  NGINX_PACKAGES['ubuntu20.04']="nginx_${NGINX_VERSION}~focal_amd64.deb"
-  NGINX_PACKAGES['ubuntu22.04']="nginx_${NGINX_VERSION}~jammy_amd64.deb"
-  NGINX_PACKAGES['ubuntu24.04']="nginx_${NGINX_VERSION}~noble_amd64.deb"
-  NGINX_PACKAGES['debian11']="nginx_${NGINX_VERSION}~bullseye_amd64.deb"
-  NGINX_PACKAGES['debian12']="nginx_${NGINX_VERSION}~bookworm_amd64.deb"
-  NGINX_PACKAGES['centos8']="nginx-${NGINX_VERSION}.el8.ngx.x86_64.rpm"
-  NGINX_PACKAGES['rhel8']="nginx-${NGINX_VERSION}.el8.ngx.x86_64.rpm"
-  NGINX_PACKAGES['rhel9']="nginx-${NGINX_VERSION}.el9.ngx.x86_64.rpm"
-  NGINX_PACKAGES['oracle8']="nginx-${NGINX_VERSION}.el8.ngx.x86_64.rpm"
-  NGINX_PACKAGES['oracle9']="nginx-${NGINX_VERSION}.el9.ngx.x86_64.rpm"
-  NGINX_PACKAGES['amzn2']="nginx-${NGINX_VERSION}.amzn2.ngx.x86_64.rpm"
+          echo "Starting nginx"
+          systemctl start nginx
 
-  declare -A NIM_PACKAGES
-  NIM_PACKAGES['ubuntu20.04']="nms-instance-manager_${NIM_VERSION}-\d*~focal_amd64\.deb"
-  NIM_PACKAGES['ubuntu22.04']="nms-instance-manager_${NIM_VERSION}-\d*~jammy_amd64\.deb"
-  NIM_PACKAGES['ubuntu24.04']="nms-instance-manager_${NIM_VERSION}-\d*~jammy_amd64\.deb"
-  NIM_PACKAGES['debian11']="nms-instance-manager_${NIM_VERSION}-\d*~bullseye_amd64\.deb"
-  NIM_PACKAGES['debian12']="nms-instance-manager_${NIM_VERSION}-\d*~bookworm_amd64\.deb"
-  NIM_PACKAGES['centos8']="nms-instance-manager-${NIM_VERSION}-\d*.el8.ngx.x86_64\.rpm"
-  NIM_PACKAGES['rhel8']="nms-instance-manager-${NIM_VERSION}-\d*.el8.ngx.x86_64\.rpm"
-  NIM_PACKAGES['rhel9']="nms-instance-manager-${NIM_VERSION}-\d*.el9.ngx.x86_64\.rpm"
-  NIM_PACKAGES['oracle8']="nms-instance-manager-${NIM_VERSION}-\d*.el8.ngx.x86_64\.rpm"
-  NIM_PACKAGES['oracle9']="nms-instance-manager-${NIM_VERSION}-\d*.el9.ngx.x86_64\.rpm"
-  NIM_PACKAGES['amzn2']="nms-instance-manager-${NIM_VERSION}-\d*.amzn2.ngx.x86_64\.rpm"
+          echo "Reloading nginx configuration"
+          systemctl restart nginx
 
-  if [ -z "${INSTALL_PATH}" ]; then
-    target_distribution="$TARGET_DISTRIBUTION"
-    echo "Target distro - $target_distribution"
-    if [[ "${#CLICKHOUSE_REPO[$target_distribution]}" -eq 0 ]]; then
-        echo "Invalid target distribution. Supported target distributions: " "${!CLICKHOUSE_REPO[@]}"
-        exit 1
-    fi
-    echo  "Creating NGINX Instance Manager installation bundle for distribution ${CLICKHOUSE_PACKAGES[${target_distribution}]}..."
-    if [ -z "${target_distribution}" ]; then
-        echo "${target_distribution} - no target distribution specified"
-        exit 1
-    fi
-    mkdir -p "${TEMP_DIR}/${target_distribution}"
-    echo "Downloading clickhouse signing keys ${CLICKHOUSE_KEY}... "
-    url_file_download ${CLICKHOUSE_KEY} "${TEMP_DIR}/${target_distribution}/clickhouse-key.gpg"
-    echo "Downloaded clickhouse signing keys"
+          echo "Enabling and starting NGINX Instance Manager"
+          systemctl enable nms nms-core nms-dpm nms-ingestion nms-integrations --now
 
-    echo "downloading nginx signing keys ${NGINX_KEY}... "
-    url_file_download ${NGINX_KEY} "${TEMP_DIR}/${target_distribution}/nginx-key.gpg"
-    echo "Downloaded nginx signing keys"
+          check_NIM_status
 
-    readarray -t clickhouse_files <<<"${CLICKHOUSE_PACKAGES[$target_distribution]}"
-    readarray -t nginx_files <<<"${NGINX_PACKAGES[$target_distribution]}"
-    readarray -t nim_files <<<"${NIM_PACKAGES[$target_distribution]}"
-
-    for package_file in "${clickhouse_files[@]}"; do
-      if [ -z "$package_file" ]; then
-         continue
-      fi
-      file_to_download="${CLICKHOUSE_REPO[$target_distribution]}$package_file"
-      save_path="${TEMP_DIR}/${target_distribution}/$package_file"
-      echo -n "Downloading ${file_to_download} ... "
-      url_file_download "$file_to_download" "$save_path"
-      echo "Downloaded clickhouse package - $save_path"
-    done
-    for package_file in "${nginx_files[@]}"; do
-      if [ -z "$package_file" ]; then
-         continue
-      fi
-      file_to_download="${NGINX_REPO[$target_distribution]}$package_file"
-      save_path="${TEMP_DIR}/${target_distribution}/$package_file"
-      echo -n "Downloading ${package_file} ... "
-      url_file_download "$file_to_download" "$save_path"
-      echo "Downloaded nginx package - $save_path"
-    done
-    for package_file in "${nim_files[@]}"; do
-      if [ -z "$package_file" ]; then
-        continue
-      fi
-      nim_with_version=$(curl -fs --cert "${NGINX_CERT_PATH}" --key "${NGINX_CERT_KEY_PATH}" "${NMS_REPO[$target_distribution]}" \
-       | grep -P "${package_file}" | sed -n 's/.*<a[^>]*href="\([^"]*\)".*/\1/p')
-      if [[ "${#nim_with_version}" -eq 0 ]]; then
-        echo "Error: NGINX Instance Manager $NIM_VERSION ($target_distribution) version not found on ${NMS_REPO[$target_distribution]}"
-        exit 1
-      fi
-      file_to_download="${NMS_REPO[$target_distribution]}${nim_with_version}"
-      save_path="${TEMP_DIR}/${target_distribution}/$nim_with_version"
-      echo -n "Downloading ${nim_with_version} ... "
-      url_file_download "$file_to_download" "$save_path"
-      echo "Downloaded NGINX Instance Manager package - $save_path"
-    done
-    bundle_file="nim-${NIM_VERSION}-${target_distribution}.tar.gz"
-    echo -n "Creating NGINX Instance Manager install bundle ... ${bundle_file}"
-    cp ${NGINX_CERT_PATH}  "${TEMP_DIR}/${target_distribution}/nginx-repo.crt"
-    cp ${NGINX_CERT_KEY_PATH} "${TEMP_DIR}/${target_distribution}/nginx-repo.key"
-    tar -zcf "$bundle_file" -C "${TEMP_DIR}/${target_distribution}" .
-    echo -e "\nSuccessfully created the NGINX Instance Manager bundle - $bundle_file"
-
-  else
-    echo "Installing NGINX Instance Manager bundle from the path ${INSTALL_PATH}"
-    if [ -f "${INSTALL_PATH}" ]; then
-      if [ ! -f "${TEMP_DIR}" ]; then
-        mkdir -p "${TEMP_DIR}"
-      fi
-      tar xvf "${INSTALL_PATH}" -C "${TEMP_DIR}"
-      chmod -R 777 "${TEMP_DIR}"
-      chown -R "${USER}" "${TEMP_DIR}"
-      if cat /etc/*-release | grep -iq 'debian\|ubuntu'; then
-        for pkg_nginx in "${TEMP_DIR}"/nginx*.deb; do
+        elif cat /etc/*-release | grep -iq 'centos\|fedora\|rhel\|Amazon Linux'; then
+          for pkg_nginx in "${TEMP_DIR}"/nginx*.rpm; do
             echo "Installing nginx from ${pkg_nginx}"
-            DEBIAN_FRONTEND=noninteractive dpkg -i "$pkg_nginx"
-            check_last_command_status "dpkg -i \"$pkg_nginx\"" $?
-        done
-        for pkg_clickhouse in "${TEMP_DIR}"/clickhouse-common*.deb; do
+            yum localinstall -y -v --disableplugin=subscription-manager --skip-broken "$pkg_nginx"
+          done
+          for pkg_clickhouse in "${TEMP_DIR}"/clickhouse-common*.rpm; do
             echo "Installing clickhouse dependencies from ${pkg_clickhouse}"
-            DEBIAN_FRONTEND=noninteractive dpkg -i  "$pkg_clickhouse"
-            check_last_command_status "dpkg -i \"$pkg_clickhouse\"" $?
-        done
-        for pkg_clickhouse_srv in "${TEMP_DIR}"/clickhouse-server*.deb; do
-            echo "Installing clickhouse dependencies from ${pkg_clickhouse_srv}"
-            DEBIAN_FRONTEND=noninteractive dpkg -i  "$pkg_clickhouse_srv"
-            check_last_command_status "dpkg -i \"$pkg_clickhouse_srv\"" $?
-        done
-        for pkg_nim in "${TEMP_DIR}"/nms-instance-manager*.deb; do
+            yum localinstall -y -v --disableplugin=subscription-manager --skip-broken "$pkg_clickhouse"
+          done
+          for pkg_clickhouse_srv in "${TEMP_DIR}"/clickhouse-server*.rpm; do
+            echo "Installing clickhouse dependencies from ${pkg_clickhouse}"
+            yum localinstall -y -v --disableplugin=subscription-manager --skip-broken "$pkg_clickhouse_srv"
+          done
+          for pkg_nim in "${TEMP_DIR}"/nms-instance-manager*.rpm; do
             echo "Installing NGINX Instance Manager from ${pkg_nim}"
-            DEBIAN_FRONTEND=noninteractive dpkg -i "$pkg_nim"
-            check_last_command_status "dpkg -i \"$pkg_nim\"" $?
-        done
+            yum localinstall -y -v --disableplugin=subscription-manager --skip-broken "$pkg_nim"
+          done
 
-        generate
-        echo "Starting clickhouse-server"
-        systemctl start clickhouse-server
+          generate
+          echo "Starting clickhouse-server"
+          systemctl start clickhouse-server
 
-        echo "Starting nginx"
-        systemctl start nginx
+          echo "Starting nginx"
+          systemctl start nginx
 
-        echo "Reloading nginx configuration"
-        systemctl restart nginx
+          echo "Reloading nginx configuration"
+          systemctl restart nginx
 
-        echo "Enabling and starting NGINX Instance Manager"
-        systemctl enable nms nms-core nms-dpm nms-ingestion nms-integrations --now
+          echo "Enabling and starting NGINX Instance Manager"
+          systemctl enable nms nms-core nms-dpm nms-ingestion nms-integrations --now
 
-        check_NIM_status
+          check_NIM_status
 
-      elif cat /etc/*-release | grep -iq 'centos\|fedora\|rhel\|Amazon Linux'; then
-        for pkg_nginx in "${TEMP_DIR}"/nginx*.rpm; do
-          echo "Installing nginx from ${pkg_nginx}"
-          yum localinstall -y -v --disableplugin=subscription-manager --skip-broken "$pkg_nginx"
-        done
-        for pkg_clickhouse in "${TEMP_DIR}"/clickhouse-common*.rpm; do
-          echo "Installing clickhouse dependencies from ${pkg_clickhouse}"
-          yum localinstall -y -v --disableplugin=subscription-manager --skip-broken "$pkg_clickhouse"
-        done
-        for pkg_clickhouse_srv in "${TEMP_DIR}"/clickhouse-server*.rpm; do
-          echo "Installing clickhouse dependencies from ${pkg_clickhouse}"
-          yum localinstall -y -v --disableplugin=subscription-manager --skip-broken "$pkg_clickhouse_srv"
-        done
-        for pkg_nim in "${TEMP_DIR}"/nms-instance-manager*.rpm; do
-          echo "Installing NGINX Instance Manager from ${pkg_nim}"
-          yum localinstall -y -v --disableplugin=subscription-manager --skip-broken "$pkg_nim"
-        done
-
-        generate
-        echo "Starting clickhouse-server"
-        systemctl start clickhouse-server
-
-        echo "Starting nginx"
-        systemctl start nginx
-
-        echo "Reloading nginx configuration"
-        systemctl restart nginx
-
-        echo "Enabling and starting NGINX Instance Manager"
-        systemctl enable nms nms-core nms-dpm nms-ingestion nms-integrations --now
-
-        check_NIM_status
+        else
+          echo "Unsupported distribution"
+          exit 1
+        fi
 
       else
-        echo "Unsupported distribution"
+        echo "Provided install path ${INSTALL_PATH} doesn't exists"
         exit 1
       fi
+      curl -s -o /dev/null --cert ${NGINX_CERT_PATH} --key ${NGINX_CERT_KEY_PATH} "https://pkgs.nginx.com/nms/?using_install_script=true&app=nim&mode=online"
+}
 
+install_nim_offline() {
+    if [ -z "${INSTALL_PATH}" ]; then
+        package_nim_offline
     else
-      echo "Provided install path ${INSTALL_PATH} doesn't exists"
-      exit 1
+        install_nim_offline_from_file
     fi
-    curl -s -o /dev/null --cert ${NGINX_CERT_PATH} --key ${NGINX_CERT_KEY_PATH} "https://pkgs.nginx.com/nms/?using_install_script=true&app=nim&mode=online"
+}
+
+OPTS_STRING="k:c:m:d:i:s:p:n:hv:t:j:rf:l"
+while getopts ${OPTS_STRING} opt; do
+    case ${opt} in
+      c)
+        if [ ! -d "/etc/ssl/nginx" ]; then
+          mkdir /etc/ssl/nginx
+          check_last_command_status "mkdir /etc/ssl/nginx" $?
+        fi
+        cp "${OPTARG}" ${NGINX_CERT_PATH}
+        check_last_command_status "cp ${OPTARG} ${NGINX_CERT_PATH}" $?
+        ;;
+      k)
+        if [ ! -d "/etc/ssl/nginx" ]; then
+          mkdir /etc/ssl/nginx
+          check_last_command_status "mkdir /etc/ssl/nginx" $?
+        fi
+        cp "${OPTARG}" ${NGINX_CERT_KEY_PATH}
+        check_last_command_status "cp ${OPTARG} ${NGINX_CERT_KEY_PATH}" $?
+        ;;
+      p)
+        USE_NGINX_PLUS="true"
+        NGINX_PLUS_VERSION=${OPTARG}
+        ;;
+      s)
+        USE_SM_MODULE="true"
+        NIM_SM_VERSION="${OPTARG}"
+        ;;
+      i)
+        INSTALL_PATH=${OPTARG}
+        ;;
+      n)
+        NGINX_VERSION=${OPTARG}
+        ;;
+      m)
+        MODE="${OPTARG}"
+        if [[ "${MODE}" != "online" && "${MODE}" != "offline" ]]; then
+            echo "invalid mode ${MODE}"
+            echo "supported values for mode are 'online' or 'offline'"
+            exit 1
+        fi
+        ;;
+      d)
+        TARGET_DISTRIBUTION=${OPTARG}
+        ;;
+      v)
+        NIM_VERSION=${OPTARG}
+        ;;
+      j)
+        LICENSE_JWT_PATH=${OPTARG}
+        ;;
+      t)
+        CLICKHOUSE_VERSION=${OPTARG}
+        ;;
+      r)
+        UNINSTALL_NIM="true"
+        ;;
+      f)
+        NIM_FQDN=${OPTARG}
+        ;;
+      h)
+         printUsageInfo
+         exit 0
+        ;;
+      l)
+         printSupportedOS
+         exit 0
+         ;;
+      :)
+        echo "Option -${OPTARG} requires an argument."
+        exit 1
+        ;;
+      ?)
+        echo "Invalid option: -${OPTARG}."
+        exit 1
+        ;;
+    esac
+done
+
+check_cert_key_jwt_path
+if [ "${MODE}" == "online" ]; then
+  check_if_nim_installed
+  install_nim_online
+  check_NIM_status
+else
+   if [ -z "${INSTALL_PATH}" ]; then
+    package_nim_offline
+  else
+    install_nim_offline_from_file
   fi
 fi
