@@ -36,6 +36,7 @@ TARGET_DISTRIBUTION=""
 PACKAGE_INSTALLER=""
 NMS_NGINX_MGMT_BLOCK="mgmt { \n  usage_report endpoint=127.0.0.1 interval=30m; \n  ssl_verify off; \n}";
 NIM_FQDN=""
+OS_ARCH="amd64"
 UBUNTU_2004="ubuntu20.04"
 UBUNTU_2204="ubuntu22.04"
 UBUNTU_2404="ubuntu24.04"
@@ -68,6 +69,19 @@ SUPPORTED_OS+=${DEB_OS[@]}
 SUPPORTED_OS+=" "${RPM_OS[@]}
 SUPPORTED_OS+=" "${CENT_OS[@]}
 SUPPORTED_OS+=" "${UBUNTU_OS[@]}
+
+declare -A OS_DISTRO_MAP
+OS_DISTRO_MAP['ubuntu20.04']="focal"
+OS_DISTRO_MAP['ubuntu22.04']="jammy"
+OS_DISTRO_MAP['ubuntu24.04']="noble"
+OS_DISTRO_MAP['debian11']="bullseye"
+OS_DISTRO_MAP['debian12']="bookworm"
+OS_DISTRO_MAP['centos8']=".el8.ngx.x86_64"
+OS_DISTRO_MAP['rhel8']=".el8.ngx.x86_64"
+OS_DISTRO_MAP['rhel9']=".el9.ngx.x86_64"
+OS_DISTRO_MAP['oracle8']=".el8.ngx.x86_64"
+OS_DISTRO_MAP['oracle9']=".el9.ngx.x86_64"
+OS_DISTRO_MAP['amzn2']=".amzn2.ngx.x86_64"
 
 declare -A NGINX_PLUS_REPO
 NGINX_PLUS_REPO['ubuntu20.04']="https://pkgs.nginx.com/plus/ubuntu/pool/nginx-plus/n/nginx-plus/"
@@ -209,8 +223,13 @@ findVersionFromUrl(){
     repoUrl=$1
     version=$2
     findLatest=$3
-    readarray -t versions < <(curl -s  "${repoUrl}" | awk -F '"' '/href=/ {print $2}' | grep "${version}" | sort)
+    if [[ "$repoUrl" == *"packages.clickhouse.com"* ]]; then
+        readarray -t versions < <(curl -s  "${repoUrl}" | awk -F'[<>"]' '/href=.*\.deb/ {print $5}' |  sort -t'_' -k2,2V | grep -E "${version}")
+    else
+        readarray -t versions < <(curl -s  "${repoUrl}" | awk -F '"' '/href=/ {print $2}' |  sort -t'_' -k2,2V | grep -E "${version}")
+    fi
     versions_count=${#versions[@]}
+
     if [ "${versions_count}" -eq 0 ]; then
           printf "Package %s not found. See available versions:" "${versions[@]}"
           exit 1;
@@ -793,12 +812,12 @@ package_nim_offline(){
         if [[ "${USE_NGINX_PLUS}" == "true" ]]; then
               nginx_plus_path=""
               if [ "${NGINX_PLUS_VERSION}" == "latest" ]; then
-                  nginx_plus_path=$(findVersionFromUrl "${NGINX_PLUS_REPO[${TARGET_DISTRIBUTION}]}" "nginx-plus_" "true")
+                  nginx_plus_path=$(findVersionFromUrl "${NGINX_PLUS_REPO[${TARGET_DISTRIBUTION}]}" "^nginx-plus_[0-9]+\.[0-9]+\.[0-9]+-([0-9]+)~${OS_DISTRO_MAP[${TARGET_DISTRIBUTION}]}_${OS_ARCH}\.(deb|rpm)$" "true")
                   echo "latest version found for package nginx_plus is ${nginx_plus_path}"
                   check_last_command_status "failed to get the version ${NGINX_PLUS_VERSION}" $?
                   exit 1
               else
-                  nginx_plus_path=$(findVersionFromUrl "${NGINX_PLUS_REPO[${TARGET_DISTRIBUTION}]}" "nginx-plus_${NGINX_PLUS_VERSION}" "false")
+                  nginx_plus_path=$(findVersionFromUrl "${NGINX_PLUS_REPO[${TARGET_DISTRIBUTION}]}" "^nginx-plus_${NGINX_PLUS_VERSION//./\\.}-([0-9]+)~${OS_DISTRO_MAP[${TARGET_DISTRIBUTION}]}_${OS_ARCH}\.(deb|rpm)$" "false")
                   check_last_command_status "failed to get the nginx plus version ${NGINX_PLUS_VERSION}" $?
                   exit 1
               fi
@@ -808,11 +827,12 @@ package_nim_offline(){
         else
              declare nginx_full_path=""
              if [ "${NGINX_VERSION}" == "latest" ]; then
-                  nginx_full_path=$(findVersionFromUrl "${NGINX_REPO[${TARGET_DISTRIBUTION}]}" "nginx_" "true")
-                  echo "latest version found for package nginx_plus is ${nginx_full_path}"
+                  echo "fetching latest version from ${NGINX_REPO[${TARGET_DISTRIBUTION}]} ${OS_DISTRO_MAP[${TARGET_DISTRIBUTION}]} "
+                  nginx_full_path=$(findVersionFromUrl "${NGINX_REPO[${TARGET_DISTRIBUTION}]}" "^nginx_[0-9]+\.[0-9]+\.[0-9]+-([0-9]+)~${OS_DISTRO_MAP[${TARGET_DISTRIBUTION}]}_(amd64|arm64)\.(deb|rpm)$" "true")
+                  echo "latest version found for nginx is ${nginx_full_path}"
                   check_last_command_status "failed to get the nginx version ${NGINX_VERSION}" $?
              else
-                  nginx_full_path=$(findVersionFromUrl "${NGINX_REPO[${TARGET_DISTRIBUTION}]}" "nginx_${NGINX_VERSION}" "false")
+                  nginx_full_path=$(findVersionFromUrl "${NGINX_REPO[${TARGET_DISTRIBUTION}]}" "^nginx-plus_${NGINX_VERSION//./\\.}-([0-9]+)~${OS_DISTRO_MAP[${TARGET_DISTRIBUTION}]}_(amd64|arm64)\.(deb|rpm)$" "false")
                   check_last_command_status "failed to get the nginx version ${NGINX_VERSION}" $?
              fi
              echo "Downloading ${NGINX_PLUS_REPO[${TARGET_DISTRIBUTION}]}/${nginx_full_path}...."
@@ -821,30 +841,29 @@ package_nim_offline(){
         fi
 
           #download clickhouse dependencies
-          clickhouse-common-static clickhouse-server clickhouse-client
-
           declare clickhouse_common_path=""
           if [ "${CLICKHOUSE_VERSION}" == "latest" ]; then
-              clickhouse_common_path=$(findVersionFromUrl "${CLICKHOUSE_REPO[${TARGET_DISTRIBUTION}]}" "clickhouse-common-static" "true")
+              clickhouse_common_path=$(findVersionFromUrl "${CLICKHOUSE_REPO[${TARGET_DISTRIBUTION}]}" "^clickhouse-common-static.*_[0-9]+\.[0-9]+\.[0-9]+[0-9]$" "true")
+              echo "fetching clickhouse-common-static from the path ${clickhouse_common_path}"
               check_last_command_status "failed to get the clickhouse-common-static packages with version ${CLICKHOUSE_VERSION}" $?
           else
-              clickhouse_common_path=$(findVersionFromUrl "${CLICKHOUSE_REPO[${TARGET_DISTRIBUTION}]}" "clickhouse-common-static_${CLICKHOUSE_VERSION}" "false")
-              check_last_command_status "failed to get the clickhouse-common-static version ${CLICKHOUSE_VERSION}" $?
+              clickhouse_common_path=$(findVersionFromUrl "${CLICKHOUSE_REPO[${TARGET_DISTRIBUTION}]}" "^clickhouse-common-static_${CLICKHOUSE_VERSION//./\\.}-([0-9]+)~${OS_DISTRO_MAP[${TARGET_DISTRIBUTION}]}_(amd64|arm64)\.(deb|rpm)$" "false")
+              check_last_command_status "failed to get the clickhouse-common-static for version ${CLICKHOUSE_VERSION}" $?
           fi
           declare clickhouse_server_path=""
           if [ "${CLICKHOUSE_VERSION}" == "latest" ]; then
-              clickhouse_server_path=$(findVersionFromUrl "${CLICKHOUSE_REPO[${TARGET_DISTRIBUTION}]}" "clickhouse-server" "true")
+              clickhouse_server_path=$(findVersionFromUrl "${CLICKHOUSE_REPO[${TARGET_DISTRIBUTION}]}" "^clickhouse-server_[0-9]+\.[0-9]+\.[0-9]+-([0-9]+)~${OS_DISTRO_MAP[${TARGET_DISTRIBUTION}]}_(amd64|arm64)\.(deb|rpm)$" "true")
               check_last_command_status "failed to get the clickhouse-server packages with version ${CLICKHOUSE_VERSION}" $?
           else
-              clickhouse_server_path=$(findVersionFromUrl "${CLICKHOUSE_REPO[${TARGET_DISTRIBUTION}]}" "clickhouse-server_${CLICKHOUSE_VERSION}" "false")
+              clickhouse_server_path=$(findVersionFromUrl "${CLICKHOUSE_REPO[${TARGET_DISTRIBUTION}]}" "^clickhouse-common-static_${CLICKHOUSE_VERSION//./\\.}-([0-9]+)~${OS_DISTRO_MAP[${TARGET_DISTRIBUTION}]}_(amd64|arm64)\.(deb|rpm)$" "false")
               check_last_command_status "failed to get the clickhouse-server version ${CLICKHOUSE_VERSION}" $?
           fi
           declare clickhouse_client_path=""
           if [ "${CLICKHOUSE_VERSION}" == "latest" ]; then
-               clickhouse_client_path=$(findVersionFromUrl "${CLICKHOUSE_REPO[${TARGET_DISTRIBUTION}]}" "clickhouse-client" "true")
+               clickhouse_client_path=$(findVersionFromUrl "${CLICKHOUSE_REPO[${TARGET_DISTRIBUTION}]}" "^clickhouse-client_[0-9]+\.[0-9]+\.[0-9]+-([0-9]+)~${OS_DISTRO_MAP[${TARGET_DISTRIBUTION}]}_(amd64|arm64)\.(deb|rpm)$" "true")
                check_last_command_status "failed to get the clickhouse-client packages with version ${CLICKHOUSE_VERSION}" $?
           else
-               clickhouse_client_path=$(findVersionFromUrl "${CLICKHOUSE_REPO[${TARGET_DISTRIBUTION}]}" "clickhouse-client_${CLICKHOUSE_VERSION}" "false")
+               clickhouse_client_path=$(findVersionFromUrl "${CLICKHOUSE_REPO[${TARGET_DISTRIBUTION}]}" "^clickhouse-client_${CLICKHOUSE_VERSION//./\\.}-([0-9]+)~${OS_DISTRO_MAP[${TARGET_DISTRIBUTION}]}_(amd64|arm64)\.(deb|rpm)$" "false")
                check_last_command_status "failed to get the clickhouse-client version ${CLICKHOUSE_VERSION}" $?
           fi
           echo "Downloading ${CLICKHOUSE_REPO[${TARGET_DISTRIBUTION}]}/${clickhouse_common_path}...."
@@ -862,10 +881,10 @@ package_nim_offline(){
           #download nim dependencies
           declare nim_path=""
           if [ "${NIM_VERSION}" == "latest" ]; then
-              nim_path=$(findVersionFromUrl "${NIM_REPO}" "nms-instance-manager_" "true")
+              nim_path=$(findVersionFromUrl "${NIM_REPO}" "^nms-instance-manager_[0-9]+\.[0-9]+\.[0-9]+-([0-9]+)~${OS_DISTRO_MAP[${TARGET_DISTRIBUTION}]}_(amd64|arm64)\.(deb|rpm)$" "true")
               check_last_command_status "failed to get the nginx version ${NIM_VERSION}" $?
           else
-              nim_path=$(findVersionFromUrl "${NIM_REPO}" "nms-instance-manager_${NIM_VERSION}" "false")
+              nim_path=$(findVersionFromUrl "${NIM_REPO}" "^nms-instance-manager_${NIM_VERSION//./\\.}-([0-9]+)~${OS_DISTRO_MAP[${TARGET_DISTRIBUTION}]}_(amd64|arm64)\.(deb|rpm)$" "false")
               check_last_command_status "failed to get the nginx version ${NGINX_VERSION}" $?
           fi
           echo "Downloading ${NIM_REPO}/${nim_path}...."
@@ -978,7 +997,7 @@ install_nim_offline() {
     fi
 }
 
-OPTS_STRING="k:c:m:d:i:s:p:n:hv:t:j:rf:l"
+OPTS_STRING="k:c:m:d:i:s:p:n:hv:t:j:rf:la:"
 while getopts ${OPTS_STRING} opt; do
     case ${opt} in
       c)
@@ -1036,6 +1055,14 @@ while getopts ${OPTS_STRING} opt; do
         ;;
       f)
         NIM_FQDN=${OPTARG}
+        ;;
+      a)
+        OS_ARCH=${OPTARG}
+        if [[ "${OS_ARCH}" != "amd64" && "${OS_ARCH}" != "arm64" ]]; then
+            echo "invalid os arch passed: ${OS_ARCH}"
+            echo "supported values for mode are 'amd64' or 'arm64'"
+            exit 1
+        fi
         ;;
       h)
          printUsageInfo
